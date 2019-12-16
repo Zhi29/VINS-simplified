@@ -117,8 +117,8 @@ void System::PubImageData(double dStampSec, std::string filename)
         for (int i = 0; i < NUM_OF_CAM; i++)//遍历每一个图片 一个Frame 对应一个CAM 再次循环中 i 总是为 0 只循环一次。因为只有一个相机
         {
             
-            auto &un_pts = trackerData[i].cur_un_pts;
-            auto &cur_pts = trackerData[i].cur_pts;
+            auto &un_pts = trackerData[i].cur_un_pts;//cur_un_pts是归一化坐标
+            auto &cur_pts = trackerData[i].cur_pts;// cur_pts是像素坐标
             auto &ids = trackerData[i].ids;//这里的id包含一张图片里所有特征点的id
             auto &pts_velocity = trackerData[i].pts_velocity;
             for (unsigned int j = 0; j < ids.size(); j++)//遍历每一个图片的所有特征点
@@ -138,43 +138,6 @@ void System::PubImageData(double dStampSec, std::string filename)
                     feature_points->velocity_y_of_point.push_back(pts_velocity[j].y);
                 }
             }
-            
-            std::ifstream f;
-            f.open(filename.c_str());
-
-            if(!f.is_open())
-            {
-                std::cerr << " can't open LoadFeatures file "<<std::endl;
-                return;
-            }
-
-            while (!f.eof()) {
-
-                std::string s;
-                std::getline(f,s);
-
-                if(! s.empty())
-                {
-                    std::stringstream ss;
-                    ss << s;
-                    Eigen::VectorXd points(4);
-                    Eigen::Vector2d features;
-
-                    ss>>points(0);
-                    ss>>points(1);
-                    ss>>points(2);
-                    ss>>points(3);
-                    ss>>features(0);
-                    ss>>features(1);
-
-                    //std::cout<< features(0) << " " << features(1)<<std::endl;
-
-                    feature_points->points.push_back(points.head(3));
-                    feature_points->u_of_point.push_back(features.x());
-                    feature_points->v_of_point.push_back(features.y());
-                }
-            }
-
 
             //}
             // skip the first image; since no optical speed on frist image
@@ -232,42 +195,29 @@ void System::PubImageData(double dStampSec, std::string filename)
             return;
         }
 
-        while (!f.eof()) {
+        std::string s;
+        int ids = 0;
+        while(std::getline(f, s) && !s.empty())
+        {
+            std::istringstream ss(s);
+            Eigen::VectorXd points(4);
+            Eigen::Vector2d features;
 
-            std::string s;
-            std::getline(f,s);
-
-            if(! s.empty())
-            {
-                std::stringstream ss;
-                ss << s;
-                Eigen::VectorXd points(4);
-                Eigen::Vector2d features;
-
-                ss>>points(0);
-                ss>>points(1);
-                ss>>points(2);
-                ss>>points(3);
-                ss>>features(0);
-                ss>>features(1);
-
-                //std::cout<< features(0) << " " << features(1)<<std::endl;
-
-                feature_points->points.push_back(Eigen::Vector3d(features.x(), features.y(), 1));
-                feature_points->u_of_point.push_back(points(0));
-                feature_points->v_of_point.push_back(points(1));
-                feature_points->id_of_point.push_back(-1);
-                feature_points->velocity_x_of_point.push_back(0);
-                feature_points->velocity_y_of_point.push_back(1);
-            }
+            ss >> points(0) >> points(1) >> points(2) >> points(3) 
+               >> features(0) >> features(1);
+            
+            feature_points->points.push_back(Eigen::Vector3d(features.x(), features.y(), 1));
+            feature_points->u_of_point.push_back(features.x()); // u = f_x * X / Z + c_x
+            feature_points->v_of_point.push_back(features.y()); // v = f_y * Y / Z + c_y
+            feature_points->id_of_point.push_back(ids++);
+            feature_points->velocity_x_of_point.push_back(0);
+            feature_points->velocity_y_of_point.push_back(0);
         }
-        f.close();
-
 
         m_buf.lock();
         feature_buf.push(feature_points);
-        cout << "5 PubImage t : " << fixed << feature_points->header
-                << " feature_buf size: " << feature_buf.size() << endl;
+        //cout << "5 PubImage t : " << fixed << feature_points->header
+        //        << " feature_buf size: " << feature_buf.size() << endl;
         m_buf.unlock();
         con.notify_one();
     }
@@ -354,13 +304,13 @@ void System::PubImuData(double dStampSec, const Eigen::Vector3d &vGyr,
         return;
     }
     last_imu_t = dStampSec;
-    cout << "1 PubImuData t: " << fixed << imu_msg->header
-         << " acc: " << imu_msg->linear_acceleration.transpose()
-         << " gyr: " << imu_msg->angular_velocity.transpose() << endl;
+    //cout << "1 PubImuData t: " << fixed << imu_msg->header
+    //     << " acc: " << imu_msg->linear_acceleration.transpose()
+    //     << " gyr: " << imu_msg->angular_velocity.transpose() << endl;
     m_buf.lock();
     imu_buf.push(imu_msg);
-    cout << "1 PubImuData t: " << fixed << imu_msg->header 
-         << " imu_buf size:" << imu_buf.size() << endl;
+    //cout << "1 PubImuData t: " << fixed << imu_msg->header 
+    //     << " imu_buf size:" << imu_buf.size() << endl;
     m_buf.unlock();
     con.notify_one();
 }
