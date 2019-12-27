@@ -301,6 +301,7 @@ void System::PubImageData(double dStampSec, std::string filename)
     }
 
 #ifdef __linux__
+/**
     cv::Mat show_img;
 	cv::cvtColor(img, show_img, CV_GRAY2RGB);
 	if (SHOW_TRACK)
@@ -314,7 +315,9 @@ void System::PubImageData(double dStampSec, std::string filename)
         cv::namedWindow("IMAGE", CV_WINDOW_AUTOSIZE);
 		cv::imshow("IMAGE", show_img);
         cv::waitKey(1);
+        
 	}
+    **/
 #endif    
     // cout << "5 PubImage" << endl;
 }
