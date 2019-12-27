@@ -46,6 +46,8 @@ class FeatureTracker
 
     void undistortedPoints();
 
+    void simulation(double time, std::string filename);
+
     cv::Mat mask;
     cv::Mat fisheye_mask;
     cv::Mat prev_img, cur_img, forw_img;
@@ -62,4 +64,7 @@ class FeatureTracker
     double prev_time;
 
     static int n_id;
+
+    bool FIRST_IN = true;
+    bool FIRST_IN_TRACK = true;
 };
