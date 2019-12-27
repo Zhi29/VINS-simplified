@@ -189,7 +189,7 @@ void FeatureTracker::rejectWithF()
 
         vector<uchar> status;
         cv::findFundamentalMat(un_cur_pts, un_forw_pts, cv::FM_RANSAC, F_THRESHOLD, 0.99, status);
-        int size_a = cur_pts.size();
+        //int size_a = cur_pts.size();
         reduceVector(prev_pts, status);
         reduceVector(cur_pts, status);
         reduceVector(forw_pts, status);
@@ -257,18 +257,20 @@ void FeatureTracker::showUndistortion(const string &name)
 
 void FeatureTracker::undistortedPoints()
 {
-    cur_un_pts.clear();
+    //cur_un_pts.clear();
     cur_un_pts_map.clear();
     //cv::undistortPoints(cur_pts, un_pts, K, cv::Mat());
     for (unsigned int i = 0; i < cur_pts.size(); i++)
     {
-        Eigen::Vector2d a(cur_pts[i].x, cur_pts[i].y);
-        Eigen::Vector3d b;
-        m_camera->liftProjective(a, b);
-        cur_un_pts.push_back(cv::Point2f(b.x() / b.z(), b.y() / b.z()));
-        cur_un_pts_map.insert(make_pair(ids[i], cv::Point2f(b.x() / b.z(), b.y() / b.z())));
+        //Eigen::Vector2d a(cur_pts[i].x, cur_pts[i].y);
+        //Eigen::Vector3d b;
+        //m_camera->liftProjective(a, b);
+        //cur_un_pts.push_back(cv::Point2f(b.x() / b.z(), b.y() / b.z()));
+        //cur_un_pts_map.insert(make_pair(ids[i], cv::Point2f(b.x() / b.z(), b.y() / b.z())));
+        cur_un_pts_map.insert(make_pair(ids[i],cv::Point2f(cur_un_pts[i].x, cur_un_pts[i].y)));
         //printf("cur pts id %d %f %f", ids[i], cur_un_pts[i].x, cur_un_pts[i].y);
     }
+    
     // caculate points velocity
     if (!prev_un_pts_map.empty())
     {
@@ -303,4 +305,73 @@ void FeatureTracker::undistortedPoints()
         }
     }
     prev_un_pts_map = cur_un_pts_map;
+}
+
+void FeatureTracker::simulation(double time, std::string filename){
+    cur_time = time;
+    std::ifstream f;
+    f.open(filename.c_str());
+
+    if(!f.is_open())
+    {
+        std::cerr << " can't open LoadFeatures file "<<std::endl;
+        return;
+    }
+
+    std::string s;
+    int id = 1;
+
+    prev_pts.clear();
+    cur_pts.clear();
+    forw_pts.clear();
+    cur_un_pts.clear();
+    prev_un_pts.clear();
+    ids.clear();
+    pts_velocity.clear();
+
+
+    while(std::getline(f, s) && !s.empty())
+    {
+        std::istringstream ss(s);
+        Eigen::VectorXd points(4);
+        Eigen::Vector2d features;
+
+        ss >> points(0) >> points(1) >> points(2) >> points(3) 
+        >> features(0) >> features(1);
+
+        //std::cout<<points(0)<<" "<<points(1)<<" "<<points(2)<<" "<<points(3)<<" "<<features(0)<<" "<<features(1)<<std::endl;
+        
+        if(FIRST_IN){
+            cur_pts.push_back(cv::Point2f(FOCAL_LENGTH*features(0)+COL / 2.0, FOCAL_LENGTH*features(1)+ROW/ 2.0));//像素坐标
+            forw_pts = cur_pts;
+            cur_un_pts.push_back(cv::Point2f(features(0), features(1)));//相机坐标
+            
+            FIRST_IN = false;
+        }
+        else{
+            forw_pts.push_back(cv::Point2f(FOCAL_LENGTH*features(0)+COL / 2.0, FOCAL_LENGTH*features(1)+ROW/ 2.0));
+            cur_un_pts.push_back(cv::Point2f(features(0), features(1)));
+            cur_pts = forw_pts;
+        }
+        prev_pts = cur_pts;
+        prev_un_pts = cur_un_pts;
+
+        ids.push_back(id++);
+
+        if(FIRST_IN_TRACK)
+        {
+            track_cnt.push_back(1);
+        }
+
+
+    }
+    FIRST_IN_TRACK = false;
+    FIRST_IN = true;
+    if(!FIRST_IN_TRACK){
+        for(auto &n : track_cnt)
+            n++;
+    }
+    //pts_velocity.push_back(cv::Point2f(0, 0));
+    undistortedPoints();
+    prev_time = cur_time;
 }

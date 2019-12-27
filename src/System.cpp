@@ -181,45 +181,123 @@ void System::PubImageData(double dStampSec, std::string filename)
 
 void System::PubImageData(double dStampSec, std::string filename)
 {
-    shared_ptr<IMG_MSG> feature_points(new IMG_MSG());
-    feature_points->header = dStampSec;
-    //vector<set<int>> hash_ids(NUM_OF_CAM);
-    for (int i = 0; i < NUM_OF_CAM; i++)//遍历每一个图片 一个Frame 对应一个CAM 再次循环中 i 总是为 0 只循环一次。因为只有一个相机
+    /**
+    if (!init_feature)
     {
-        std::ifstream f;
-        f.open(filename.c_str());
+        cout << "1 PubImageData skip the first detected feature, which doesn't contain optical flow speed" << endl;
+        init_feature = 1;
+        return;
+    }
 
-        if(!f.is_open())
+    if (first_image_flag)
+    {
+        cout << "2 PubImageData first_image_flag" << endl;
+        first_image_flag = false;
+        first_image_time = dStampSec;
+        last_image_time = dStampSec;
+        return;
+    }
+    // detect unstable camera stream
+    if (dStampSec - last_image_time > 1.0 || dStampSec < last_image_time)
+    {
+        cerr << "3 PubImageData image discontinue! reset the feature tracker!" << endl;
+        first_image_flag = true;
+        last_image_time = 0;
+        pub_count = 1;
+        return;
+    }
+    last_image_time = dStampSec;
+    // frequency control
+    
+    if (round(1.0 * pub_count / (dStampSec - first_image_time)) <= FREQ)//每秒发布多少图片 太少
+    {
+        PUB_THIS_FRAME = true;
+        // reset the frequency control
+        if (abs(1.0 * pub_count / (dStampSec - first_image_time) - FREQ) < 0.01 * FREQ)
         {
-            std::cerr << " can't open LoadFeatures file "<<std::endl;
-            return;
+            first_image_time = dStampSec;
+            pub_count = 0;
         }
+    }
+    else
+    {
+        PUB_THIS_FRAME = false;
+    }**/
+    PUB_THIS_FRAME = true;
 
-        std::string s;
-        int ids = 0;
-        while(std::getline(f, s) && !s.empty())
+    TicToc t_r;
+
+    //trackerData[0].simulation(dStampSec, filename);
+
+    if(PUB_THIS_FRAME){
+        pub_count++;
+        shared_ptr<IMG_MSG> feature_points(new IMG_MSG());
+        feature_points->header = dStampSec;
+        vector<set<int>> hash_ids(NUM_OF_CAM);
+        for (int i = 0; i < NUM_OF_CAM; i++)//遍历每一个图片 一个Frame 对应一个CAM 再次循环中 i 总是为 0 只循环一次。因为只有一个相机
         {
-            std::istringstream ss(s);
-            Eigen::VectorXd points(4);
-            Eigen::Vector2d features;
-
-            ss >> points(0) >> points(1) >> points(2) >> points(3) 
-               >> features(0) >> features(1);
             
-            feature_points->points.push_back(Eigen::Vector3d(features.x(), features.y(), 1));
-            feature_points->u_of_point.push_back(features.x()); // u = f_x * X / Z + c_x
-            feature_points->v_of_point.push_back(features.y()); // v = f_y * Y / Z + c_y
-            feature_points->id_of_point.push_back(ids++);
-            feature_points->velocity_x_of_point.push_back(0);
-            feature_points->velocity_y_of_point.push_back(0);
-        }
+            std::ifstream f;
+            f.open(filename.c_str());
 
-        m_buf.lock();
-        feature_buf.push(feature_points);
-        //cout << "5 PubImage t : " << fixed << feature_points->header
-        //        << " feature_buf size: " << feature_buf.size() << endl;
-        m_buf.unlock();
-        con.notify_one();
+            if(!f.is_open())
+            {
+                std::cerr << " can't open LoadFeatures file "<<std::endl;
+                return;
+            }
+
+            std::string s;
+            int ids = 0;
+            while(std::getline(f, s) && !s.empty())
+            {
+                std::istringstream ss(s);
+                Eigen::VectorXd points(4);
+                Eigen::Vector2d features;
+
+                ss >> points(0) >> points(1) >> points(2) >> points(3) 
+                >> features(0) >> features(1);
+                
+                feature_points->points.push_back(Eigen::Vector3d(features.x(), features.y(), 1));
+                feature_points->u_of_point.push_back(460*features.x()+255); // u = f_x * X / Z + c_x
+                feature_points->v_of_point.push_back(460*features.y()+255); // v = f_y * Y / Z + c_y
+                feature_points->id_of_point.push_back(ids++);
+                feature_points->velocity_x_of_point.push_back(0);
+                feature_points->velocity_y_of_point.push_back(0);
+            }
+            
+            /*
+            auto &un_pts = trackerData[i].cur_un_pts;//cur_un_pts是归一化坐标
+            auto &cur_pts = trackerData[i].cur_pts;// cur_pts是像素坐标
+            auto &ids = trackerData[i].ids;//这里的id包含一张图片里所有特征点的id
+            auto &pts_velocity = trackerData[i].pts_velocity;
+            //std::cout<<"ids.size(): "<<ids.size()<<std::endl;
+            for (unsigned int j = 0; j < ids.size(); j++)//遍历每一个图片的所有特征点
+            {
+                //std::cout<<"track count "<<trackerData[i].track_cnt[j]<<std::endl;
+                if (trackerData[i].track_cnt[j] > 0)
+                {
+                    int p_id = ids[j];
+                    hash_ids[i].insert(p_id);
+                    double x = un_pts[j].x;
+                    double y = un_pts[j].y;
+                    double z = 1;
+                    //std::cout<<"x,y,z "<<x<<" "<<y<<" "<<z<<std::endl;
+                    feature_points->points.push_back(Vector3d(x, y, z));
+                    feature_points->id_of_point.push_back(p_id * NUM_OF_CAM + i);
+                    feature_points->u_of_point.push_back(cur_pts[j].x);
+                    feature_points->v_of_point.push_back(cur_pts[j].y);
+                    feature_points->velocity_x_of_point.push_back(pts_velocity[j].x);
+                    feature_points->velocity_y_of_point.push_back(pts_velocity[j].y);
+                }
+            }
+            */
+            m_buf.lock();
+            feature_buf.push(feature_points);
+            cout << "5 PubImage t : " << fixed << feature_points->header
+                    << " feature_buf size: " << feature_buf.size() << endl;
+            m_buf.unlock();
+            con.notify_one();
+        }
     }
 
 #ifdef __linux__
@@ -249,7 +327,7 @@ vector<pair<vector<ImuConstPtr>, ImgConstPtr>> System::getMeasurements()
     {
         if (imu_buf.empty() || feature_buf.empty())
         {
-            // cerr << "1 imu_buf.empty() || feature_buf.empty()" << endl;
+            //cerr << "1 imu_buf.empty() || feature_buf.empty()" << endl;
             return measurements;
         }
 
@@ -276,15 +354,15 @@ vector<pair<vector<ImuConstPtr>, ImgConstPtr>> System::getMeasurements()
             IMUs.emplace_back(imu_buf.front());
             imu_buf.pop();
         }
-        // cout << "1 getMeasurements IMUs size: " << IMUs.size() << endl;
+        cout << "1 getMeasurements IMUs size: " << IMUs.size() << endl;
         IMUs.emplace_back(imu_buf.front());
         if (IMUs.empty()){
             cerr << "no imu between two image" << endl;
         }
-        // cout << "1 getMeasurements img t: " << fixed << img_msg->header
-        //     << " imu begin: "<< IMUs.front()->header 
-        //     << " end: " << IMUs.back()->header
-        //     << endl;
+        cout << "1 getMeasurements img t: " << fixed << img_msg->header
+             << " imu begin: "<< IMUs.front()->header 
+             << " end: " << IMUs.back()->header
+             << endl;
         measurements.emplace_back(IMUs, img_msg);
     }
     return measurements;
@@ -328,6 +406,7 @@ void System::ProcessBackEnd()
         con.wait(lk, [&] {
             return (measurements = getMeasurements()).size() != 0;
         });
+        std::cout<<"Measurements.size(): "<<measurements.size()<<std::endl;
         if( measurements.size() > 1){
         cout << "1 getMeasurements size: " << measurements.size() 
             << " imu sizes: " << measurements[0].first.size()
@@ -343,6 +422,7 @@ void System::ProcessBackEnd()
             for (auto &imu_msg : measurement.first)
             {
                 double t = imu_msg->header;
+                //std::cout<<"processing IMU data with stamp: "<<t<<std::endl;
                 double img_t = img_msg->header + estimator.td;
                 if (t <= img_t)
                 {
@@ -358,7 +438,7 @@ void System::ProcessBackEnd()
                     ry = imu_msg->angular_velocity.y();
                     rz = imu_msg->angular_velocity.z();
                     estimator.processIMU(dt, Vector3d(dx, dy, dz), Vector3d(rx, ry, rz));
-                    // printf("1 BackEnd imu: dt:%f a: %f %f %f w: %f %f %f\n",dt, dx, dy, dz, rx, ry, rz);
+                    //printf("1 BackEnd imu: dt:%f a: %f %f %f w: %f %f %f\n",dt, dx, dy, dz, rx, ry, rz);
                 }
                 else
                 {
@@ -381,8 +461,8 @@ void System::ProcessBackEnd()
                 }
             }
 
-            // cout << "processing vision data with stamp:" << img_msg->header 
-            //     << " img_msg->points.size: "<< img_msg->points.size() << endl;
+            cout << "processing vision data with stamp:" << img_msg->header 
+                 << " img_msg->points.size: "<< img_msg->points.size() << endl;
 
             // TicToc t_s;
             map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> image;
@@ -400,7 +480,7 @@ void System::ProcessBackEnd()
                 double velocity_y = img_msg->velocity_y_of_point[i];
                 assert(z == 1);
                 Eigen::Matrix<double, 7, 1> xyz_uv_velocity;
-                xyz_uv_velocity << x, y, z, p_u, p_v, velocity_x, velocity_y;
+                xyz_uv_velocity << x, y, z, p_u, p_v, velocity_x, velocity_y;//相机坐标系坐标x,y,z 像素坐标u,v 速度x,y
                 image[feature_id].emplace_back(camera_id, xyz_uv_velocity);
             }
             TicToc t_processImage;
