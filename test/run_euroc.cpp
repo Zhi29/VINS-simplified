@@ -152,13 +152,13 @@ void PubImageData()
         pSystem->PubImageData(dStampNSec, imagePath);
 		usleep(50000*nDelayTimes);
     }
-
     fsImage.close();
 }
 
 #ifdef __APPLE__
 // support for MacOS
 void DrawIMGandGLinMainThrd(){
+	
 	string sImage_file = sConfig_path + "time_files.txt";
 
 	cout << "1 PubImageData start sImage_file: " << sImage_file << endl;
@@ -172,12 +172,14 @@ void DrawIMGandGLinMainThrd(){
 	}
 
 	std::string sImage_line;
-	double dStampNSec;
+	//double dStampNSec;
 	string sImgFileName;
 
 	pSystem->InitDrawGL();
+	
 	while (std::getline(fsImage, sImage_line) && !sImage_line.empty())
 	{
+		/**
 		std::istringstream ssImuData(sImage_line);
 		ssImuData >> dStampNSec >> sImgFileName;
 		// cout << "Image t : " << fixed << dStampNSec << " Name: " << sImgFileName << endl;
@@ -204,7 +206,8 @@ void DrawIMGandGLinMainThrd(){
 			cv::imshow("IMAGE", show_img);
 		  // cv::waitKey(1);
 		}
-
+		//pSystem->InitDrawGL();
+		**/
 		pSystem->DrawGLFrame();
 		usleep(50000*nDelayTimes);
 	}
@@ -244,8 +247,8 @@ int main(int argc, char **argv)
 	thd_PubImuData.join();
 	thd_PubImageData.join();
 
-	// thd_BackEnd.join();
-	// thd_Draw.join();
+	//thd_BackEnd.join();
+	//thd_Draw.join();
 
 	cout << "main end... see you ..." << endl;
 	return 0;
