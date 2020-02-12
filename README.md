@@ -20,7 +20,7 @@ The code support both Ubuntu and MacOS.
 ```c++
 mkdir vins_simplified
 cd vins_simplified
-git clone https://github.com/Zhi29/VINS-simplified
+git clone https://github.com/Zhi29/VINS-simplified.git
 mkdir build 
 cd build
 cmake ..
