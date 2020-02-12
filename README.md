@@ -42,7 +42,6 @@ cd build
 ![vins](doc/vins.gif)
 
 
-### 感谢
-
-我们使用了港科大沈老师组的 [VINS-Mono](https://github.com/HKUST-Aerial-Robotics/VINS-Mono) 作为基础代码，非常感谢该组的工作。
+### Acknowledgement
+Thanks for the work from [VINS-Mono](https://github.com/HKUST-Aerial-Robotics/VINS-Mono) 
 
