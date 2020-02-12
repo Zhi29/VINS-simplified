@@ -2,8 +2,10 @@
 #define MYSLAM_BACKEND_PROBLEM_H
 
 #include <unordered_map>
+#include <vector>
 #include <map>
 #include <memory>
+#include <fstream>
 
 #include "eigen_types.h"
 #include "edge.h"
@@ -89,6 +91,8 @@ public:
     //test compute prior
     void TestComputePrior();
 
+    std::ofstream save_points;
+
 private:
 
     /// Solve的实现，解通用问题
@@ -105,6 +109,12 @@ private:
 
     /// 构造大H矩阵
     void MakeHessian();
+
+    void MakeHessian_1(std::vector<std::pair<const unsigned long, std::shared_ptr<Edge>>>& edges_, MatXX &H, VecX &b);
+
+    void MakeHessian_2(std::vector<std::pair<const unsigned long, std::shared_ptr<Edge>>>& edges_, MatXX &H, VecX &b);
+
+    void MakeHessian_3(std::vector<std::pair<const unsigned long, std::shared_ptr<Edge>>>& edges_, MatXX &H, VecX &b);
 
     /// schur求解SBA
     void SchurSBA();
@@ -141,6 +151,8 @@ private:
     /// 计算LM算法的初始Lambda
     void ComputeLambdaInitLM();
 
+    void ComputeLambdaInitDL();
+
     /// Hessian 对角线加上或者减去  Lambda
     void AddLambdatoHessianLM();
 
@@ -148,6 +160,10 @@ private:
 
     /// LM 算法中用于判断 Lambda 在上次迭代中是否可以，以及Lambda怎么缩放
     bool IsGoodStepInLM();
+    bool IsGoodStepInLM_1();  
+    bool IsGoodStepInDL();
+
+    void UpdateRadius(double rho);
 
     /// PCG 迭代线性求解器
     VecX PCGSolver(const MatXX &A, const VecX &b, int maxIter);
@@ -157,12 +173,19 @@ private:
     double stopThresholdLM_;    // LM 迭代退出阈值条件
     double ni_;                 //控制 Lambda 缩放大小
 
+    double radius = 1.0 ; 
+    double max_radius = 100.0 ;
+
+
     ProblemType problemType_;
 
     /// 整个信息矩阵
     MatXX Hessian_;
     VecX b_;
     VecX delta_x_;
+
+    /// dogleg算法增量
+    VecX delta_sd;
 
     /// 先验部分信息
     MatXX H_prior_;
