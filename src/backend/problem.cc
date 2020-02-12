@@ -2,6 +2,7 @@
 #include <fstream>
 #include <eigen3/Eigen/Dense>
 #include <iomanip>
+#include <thread>
 #include "backend/problem.h"
 #include "utility/tic_toc.h"
 
@@ -166,6 +167,7 @@ bool Problem::RemoveEdge(std::shared_ptr<Edge> edge) {
     return true;
 }
 
+/**
 bool Problem::Solve(int iterations) {
 
 
@@ -173,6 +175,9 @@ bool Problem::Solve(int iterations) {
         std::cerr << "\nCannot solve problem without edges or verticies" << std::endl;
         return false;
     }
+
+    string dist = "/Users/zhili/Documents/C++/VINS-COURSE/build/H_time_LM_0.txt";
+    save_points.open(dist, std::ios::binary | std::ios::app | std::ios::in | std::ios::out);
 
     TicToc t_solve;
     // 统计优化变量的维数，为构建 H 矩阵做准备
@@ -245,9 +250,106 @@ bool Problem::Solve(int iterations) {
     }
     std::cout << "problem solve cost: " << t_solve.toc() << " ms" << std::endl;
     std::cout << "   makeHessian cost: " << t_hessian_cost_ << " ms" << std::endl;
+    save_points<<t_hessian_cost_<<" ";
     t_hessian_cost_ = 0.;
     return true;
 }
+**/
+
+
+bool Problem::Solve(int iterations){
+    if (edges_.size() == 0 || verticies_.size() == 0) {
+        std::cerr << "\nCannot solve problem without edges or verticies" << std::endl;
+        return false;
+    }
+
+    string dist = "/Users/zhili/Documents/C++/VINS-COURSE/build/H_time_dl_1.txt";
+    save_points.open(dist, std::ios::binary | std::ios::app | std::ios::in | std::ios::out);
+
+    TicToc t_solve;
+    //统计优化变量的维数，为构建H矩阵做准备
+    SetOrdering();
+    //遍历edge, 构建H矩阵
+    MakeHessian();
+    //初始化
+    ComputeLambdaInitDL();  
+
+    delta_sd =  ((b_.transpose() * b_)[0]/(b_.transpose() * Hessian_ * b_)[0]) * b_ ;
+
+    bool stop = false;
+    int iter = 0;
+    double last_chi_ = 1e20;
+    while(!stop && (iter < iterations)){
+        std::cout<<"iter: "<<iter<<" , chi = "<<currentChi_<<std::endl;
+        bool oneStepSuccess = false;
+        int false_cnt = 0;
+        bool GNcomputed = false;
+        while(!oneStepSuccess && false_cnt < 10) //不断尝试Lambda, 直到成功迭代一步
+        {   
+            std::cout<<"radius: "<<radius<<std::endl;
+            if(delta_sd.norm() >= radius)
+               delta_x_ = (radius / delta_sd.norm()) * delta_sd;
+            else{
+                if(!GNcomputed){
+                    SolveLinearSystem();
+                    GNcomputed = true;
+                }
+                if(delta_x_.norm() > radius){
+                    //求解beta || delta_sd + beta * (delta_gn - delta_sd)||^2 = radius^2;
+                    //A: delta_sd  B:sd_gn
+                    VecX sd_gn = delta_x_ - delta_sd; //B
+                    double temp1 = (delta_sd.transpose() * sd_gn + sd_gn.transpose()*delta_sd)[0];
+                    double factor = temp1*temp1 - 4 * ((sd_gn.transpose() * sd_gn)[0] * ((delta_sd.transpose() * delta_sd)[0] - radius*radius));
+                    double beta = (-temp1 + sqrt(factor)) / (2*(sd_gn.transpose()*sd_gn)[0]);
+
+                    //std::cout<<"beta: "<<beta<<std::endl;
+
+                    delta_x_ = delta_sd + beta * (delta_x_ - delta_sd);//beta 为 0-1之间的数
+                }
+            }
+            //优化退出条件1： 如果增值 delta_x_ 很小则退出
+            if(delta_x_.norm() <= 1e-12)
+                stop = true;
+            //更新状态量
+            UpdateStates();
+            //判断当前步是否可行， chi2也计算一下
+            oneStepSuccess = IsGoodStepInDL();
+            //后续处理
+            if(oneStepSuccess) {
+                MakeHessian();
+                delta_sd =  ((b_.transpose() * b_)[0]/(b_.transpose() * Hessian_ * b_)[0]) * b_ ;
+                false_cnt = 0;
+                double b_max = 0.0;
+                for (int i = 0; i < b_.size(); ++i) {
+                    b_max = max(fabs(b_(i)), b_max);
+                }
+//                // 优化退出条件2： 如果残差 b_max 已经很小了，那就退出
+                stop = (b_max <= 1e-12);
+
+            }
+            else{
+                false_cnt++;
+                RollbackStates(); //误差没下降，回滚
+            }
+        }
+        iter++;
+        std::cout<<"last_chi_ - currentChi: "<<last_chi_ - currentChi_ <<std::endl;
+        if(last_chi_ - currentChi_ < 1e-5)
+        {
+            std::cout << "sqrt(currentChi_) <= stopThresholdLM_" << std::endl;
+            stop = true;
+        }
+        last_chi_ = currentChi_;
+    }
+    std::cout << "problem solve cost: " << t_solve.toc() << " ms" << std::endl;
+    std::cout << "   makeHessian cost: " << t_hessian_cost_ << " ms" << std::endl;
+    save_points<<t_hessian_cost_<<" ";
+    //save_points.close();
+    t_hessian_cost_ = 0.;
+    return true;
+}
+
+
 
 bool Problem::SolveGenericProblem(int iterations) {
     return true;
@@ -300,6 +402,7 @@ bool Problem::CheckOrdering() {
     return true;
 }
 
+
 void Problem::MakeHessian() {
     TicToc t_h;
     // 直接构造大的 H 矩阵
@@ -351,7 +454,6 @@ void Problem::MakeHessian() {
                 if (j != i) {
                     // 对称的下三角
                     H.block(index_j, index_i, dim_j, dim_i).noalias() += hessian.transpose();
-
                 }
             }
             b.segment(index_i, dim_i).noalias() -= drho * jacobian_i.transpose()* edge.second->Information() * edge.second->Residual();
@@ -387,6 +489,256 @@ void Problem::MakeHessian() {
 
 
 }
+
+
+
+void Problem::MakeHessian_1(std::vector<std::pair<const unsigned long, std::shared_ptr<Edge>>>& edges_, MatXX &H, VecX &b){
+    std::vector<std::pair<const unsigned long, std::shared_ptr<Edge>>>::iterator edge;
+    for(edge = edges_.begin(); edge != edges_.begin() + edges_.size()/3; edge++){
+        edge->second->ComputeResidual();
+        edge->second->ComputeJacobians();
+
+        // TODO:: robust cost
+        auto jacobians = edge->second->Jacobians();
+        auto verticies = edge->second->Verticies();
+        assert(jacobians.size() == verticies.size());
+        for (size_t i = 0; i < verticies.size(); ++i) {
+            auto v_i = verticies[i];
+            if (v_i->IsFixed()) continue;    // Hessian 里不需要添加它的信息，也就是它的雅克比为 0
+
+            auto jacobian_i = jacobians[i];
+            ulong index_i = v_i->OrderingId();
+            ulong dim_i = v_i->LocalDimension();
+
+            // 鲁棒核函数会修改残差和信息矩阵，如果没有设置 robust cost function，就会返回原来的
+            double drho;
+            MatXX robustInfo(edge->second->Information().rows(),edge->second->Information().cols());
+            edge->second->RobustInfo(drho,robustInfo);
+
+            MatXX JtW = jacobian_i.transpose() * robustInfo;
+            for (size_t j = i; j < verticies.size(); ++j) {
+                auto v_j = verticies[j];
+
+                if (v_j->IsFixed()) continue;
+
+                auto jacobian_j = jacobians[j];
+                ulong index_j = v_j->OrderingId();
+                ulong dim_j = v_j->LocalDimension();
+
+                assert(v_j->OrderingId() != -1);
+                MatXX hessian = JtW * jacobian_j;
+
+                // 所有的信息矩阵叠加起来
+                H.block(index_i, index_j, dim_i, dim_j).noalias() += hessian;
+                if (j != i) {
+                    // 对称的下三角
+                    H.block(index_j, index_i, dim_j, dim_i).noalias() += hessian.transpose();
+                }
+            }
+            b.segment(index_i, dim_i).noalias() -= drho * jacobian_i.transpose()* edge->second->Information() * edge->second->Residual();
+        }
+    }
+}
+
+void Problem::MakeHessian_2(std::vector<std::pair<const unsigned long, std::shared_ptr<Edge>>>& edges_, MatXX &H, VecX &b){
+    std::vector<std::pair<const unsigned long, std::shared_ptr<Edge>>>::iterator edge;
+    for(edge = edges_.begin() + edges_.size()/3; edge != edges_.begin()+edges_.size()*2/3; edge++){
+        edge->second->ComputeResidual();
+        edge->second->ComputeJacobians();
+
+        // TODO:: robust cost
+        auto jacobians = edge->second->Jacobians();
+        auto verticies = edge->second->Verticies();
+        assert(jacobians.size() == verticies.size());
+        for (size_t i = 0; i < verticies.size(); ++i) {
+            auto v_i = verticies[i];
+            if (v_i->IsFixed()) continue;    // Hessian 里不需要添加它的信息，也就是它的雅克比为 0
+
+            auto jacobian_i = jacobians[i];
+            ulong index_i = v_i->OrderingId();
+            ulong dim_i = v_i->LocalDimension();
+
+            // 鲁棒核函数会修改残差和信息矩阵，如果没有设置 robust cost function，就会返回原来的
+            double drho;
+            MatXX robustInfo(edge->second->Information().rows(),edge->second->Information().cols());
+            edge->second->RobustInfo(drho,robustInfo);
+
+            MatXX JtW = jacobian_i.transpose() * robustInfo;
+            for (size_t j = i; j < verticies.size(); ++j) {
+                auto v_j = verticies[j];
+
+                if (v_j->IsFixed()) continue;
+
+                auto jacobian_j = jacobians[j];
+                ulong index_j = v_j->OrderingId();
+                ulong dim_j = v_j->LocalDimension();
+
+                assert(v_j->OrderingId() != -1);
+                MatXX hessian = JtW * jacobian_j;
+
+                // 所有的信息矩阵叠加起来
+                H.block(index_i, index_j, dim_i, dim_j).noalias() += hessian;
+                if (j != i) {
+                    // 对称的下三角
+                    H.block(index_j, index_i, dim_j, dim_i).noalias() += hessian.transpose();
+                }
+            }
+            b.segment(index_i, dim_i).noalias() -= drho * jacobian_i.transpose()* edge->second->Information() * edge->second->Residual();
+        }
+    }
+}
+
+void Problem::MakeHessian_3(std::vector<std::pair<const unsigned long, std::shared_ptr<Edge>>>& edges_, MatXX &H, VecX &b){
+    std::vector<std::pair<const unsigned long, std::shared_ptr<Edge>>>::iterator edge;
+    for(edge = edges_.begin() + edges_.size()*2/3; edge != edges_.end(); edge++){
+        edge->second->ComputeResidual();
+        edge->second->ComputeJacobians();
+
+        // TODO:: robust cost
+        auto jacobians = edge->second->Jacobians();
+        auto verticies = edge->second->Verticies();
+        assert(jacobians.size() == verticies.size());
+        for (size_t i = 0; i < verticies.size(); ++i) {
+            auto v_i = verticies[i];
+            if (v_i->IsFixed()) continue;    // Hessian 里不需要添加它的信息，也就是它的雅克比为 0
+
+            auto jacobian_i = jacobians[i];
+            ulong index_i = v_i->OrderingId();
+            ulong dim_i = v_i->LocalDimension();
+
+            // 鲁棒核函数会修改残差和信息矩阵，如果没有设置 robust cost function，就会返回原来的
+            double drho;
+            MatXX robustInfo(edge->second->Information().rows(),edge->second->Information().cols());
+            edge->second->RobustInfo(drho,robustInfo);
+
+            MatXX JtW = jacobian_i.transpose() * robustInfo;
+            for (size_t j = i; j < verticies.size(); ++j) {
+                auto v_j = verticies[j];
+
+                if (v_j->IsFixed()) continue;
+
+                auto jacobian_j = jacobians[j];
+                ulong index_j = v_j->OrderingId();
+                ulong dim_j = v_j->LocalDimension();
+
+                assert(v_j->OrderingId() != -1);
+                MatXX hessian = JtW * jacobian_j;
+
+                // 所有的信息矩阵叠加起来
+                H.block(index_i, index_j, dim_i, dim_j).noalias() += hessian;
+                if (j != i) {
+                    // 对称的下三角
+                    H.block(index_j, index_i, dim_j, dim_i).noalias() += hessian.transpose();
+                }
+            }
+            b.segment(index_i, dim_i).noalias() -= drho * jacobian_i.transpose()* edge->second->Information() * edge->second->Residual();
+        }
+    }
+}
+
+/**
+void Problem::MakeHessian() {
+    TicToc t_h;
+    // 直接构造大的 H 矩阵
+    ulong size = ordering_generic_;
+    MatXX H(MatXX::Zero(size, size));
+    VecX b(VecX::Zero(size));
+
+    //std::cout<<"edges_: "<<edges_.size()<<std::endl;
+    
+    std::vector<std::pair<const unsigned long, std::shared_ptr<Edge>>> edge_vector;
+
+    for(auto &edge : edges_){
+        edge_vector.push_back(edge);
+    }
+
+    //MakeHessian_1(edge_vector, H, b);
+    //MakeHessian_2(edge_vector, H, b);
+    //MakeHessian_3(edge_vector, H, b);
+    
+
+    std::thread thd_pose_hessian = std::thread(&Problem::MakeHessian_1, this, std::ref(edge_vector), std::ref(H), std::ref(b));
+    std::thread thd_lk_hessian = std::thread(&Problem::MakeHessian_2, this, std::ref(edge_vector), std::ref(H), std::ref(b));
+    std::thread thd_3_hessian = std::thread(&Problem::MakeHessian_3, this, std::ref(edge_vector), std::ref(H), std::ref(b));
+
+    thd_pose_hessian.join();
+    thd_lk_hessian.join();
+    thd_3_hessian.join();
+    /**
+    for(auto& edge: edges_){
+        edge.second->ComputeResidual();
+        edge.second->ComputeJacobians();
+
+        // TODO:: robust cost
+        auto jacobians = edge.second->Jacobians();
+        auto verticies = edge.second->Verticies();
+        assert(jacobians.size() == verticies.size());
+        for (size_t i = 0; i < verticies.size(); ++i) {
+            auto v_i = verticies[i];
+            if (v_i->IsFixed()) continue;    // Hessian 里不需要添加它的信息，也就是它的雅克比为 0
+
+            auto jacobian_i = jacobians[i];
+            ulong index_i = v_i->OrderingId();
+            ulong dim_i = v_i->LocalDimension();
+
+            // 鲁棒核函数会修改残差和信息矩阵，如果没有设置 robust cost function，就会返回原来的
+            double drho;
+            MatXX robustInfo(edge.second->Information().rows(),edge.second->Information().cols());
+            edge.second->RobustInfo(drho,robustInfo);
+
+            MatXX JtW = jacobian_i.transpose() * robustInfo;
+            for (size_t j = i; j < verticies.size(); ++j) {
+                auto v_j = verticies[j];
+
+                if (v_j->IsFixed()) continue;
+
+                auto jacobian_j = jacobians[j];
+                ulong index_j = v_j->OrderingId();
+                ulong dim_j = v_j->LocalDimension();
+
+                assert(v_j->OrderingId() != -1);
+                MatXX hessian = JtW * jacobian_j;
+
+                // 所有的信息矩阵叠加起来
+                H.block(index_i, index_j, dim_i, dim_j).noalias() += hessian;
+                if (j != i) {
+                    // 对称的下三角
+                    H.block(index_j, index_i, dim_j, dim_i).noalias() += hessian.transpose();
+                }
+            }
+            b.segment(index_i, dim_i).noalias() -= drho * jacobian_i.transpose()* edge.second->Information() * edge.second->Residual();
+        }
+    }
+    
+    //这里需要加上一个 "** /"
+
+    Hessian_ = H;
+    b_ = b;
+    t_hessian_cost_ += t_h.toc();
+
+    if(H_prior_.rows() > 0)
+    {
+        MatXX H_prior_tmp = H_prior_;
+        VecX b_prior_tmp = b_prior_;
+
+        /// 遍历所有 POSE 顶点，然后设置相应的先验维度为 0 .  fix 外参数, SET PRIOR TO ZERO
+        /// landmark 没有先验
+        for (auto vertex: verticies_) {
+            if (IsPoseVertex(vertex.second) && vertex.second->IsFixed() ) {
+                int idx = vertex.second->OrderingId();
+                int dim = vertex.second->LocalDimension();
+                H_prior_tmp.block(idx,0, dim, H_prior_tmp.cols()).setZero();
+                H_prior_tmp.block(0,idx, H_prior_tmp.rows(), dim).setZero();
+                b_prior_tmp.segment(idx,dim).setZero();
+//                std::cout << " fixed prior, set the Hprior and bprior part to zero, idx: "<<idx <<" dim: "<<dim<<std::endl;
+            }
+        }
+        Hessian_.topLeftCorner(ordering_poses_, ordering_poses_) += H_prior_tmp;
+        b_.head(ordering_poses_) += b_prior_tmp;
+    }
+
+    delta_x_ = VecX::Zero(size);  // initial delta_x = 0_n;
+}**/
 
 /*
  * Solve Hx = b, we can use PCG iterative method or use sparse Cholesky
@@ -431,9 +783,9 @@ void Problem::SolveLinearSystem() {
         // step2: solve Hpp * delta_x = bpp
         VecX delta_x_pp(VecX::Zero(reserve_size));
 
-        for (ulong i = 0; i < ordering_poses_; ++i) {
-            H_pp_schur_(i, i) += currentLambda_;              // LM Method
-        }
+        //for (ulong i = 0; i < ordering_poses_; ++i) {
+        //    H_pp_schur_(i, i) += currentLambda_;              // LM Method no need for dogleg
+        //}
 
         // TicToc t_linearsolver;
         delta_x_pp =  H_pp_schur_.ldlt().solve(b_pp_schur_);//  SVec.asDiagonal() * svd.matrixV() * Ub;    
@@ -494,13 +846,14 @@ void Problem::RollbackStates() {
 }
 
 /// LM
+
 void Problem::ComputeLambdaInitLM() {
     ni_ = 2.;
     currentLambda_ = -1.;
     currentChi_ = 0.0;
 
     for (auto edge: edges_) {
-        currentChi_ += edge.second->RobustChi2();
+        currentChi_ += edge.second->RobustChi2(); //residual * information * residual
     }
     if (err_prior_.rows() > 0)
         currentChi_ += err_prior_.norm();
@@ -520,6 +873,19 @@ void Problem::ComputeLambdaInitLM() {
     currentLambda_ = tau * maxDiagonal;
 //        std::cout << "currentLamba_: "<<maxDiagonal<<" "<<currentLambda_<<std::endl;
 }
+
+
+void Problem::ComputeLambdaInitDL() {
+    currentChi_ = 0.0;
+    for (auto edge: edges_) {
+        currentChi_ += edge.second->RobustChi2(); //residual * information * residual
+    }
+    if (err_prior_.rows() > 0)
+        currentChi_ += err_prior_.norm();
+    //currentChi_ *= 0.5;
+    
+}
+
 
 void Problem::AddLambdatoHessianLM() {
     ulong size = Hessian_.cols();
@@ -569,6 +935,79 @@ bool Problem::IsGoodStepInLM() {
         currentLambda_ *= ni_;
         ni_ *= 2;
         return false;
+    }
+}
+
+bool Problem::IsGoodStepInLM_1(){
+    ulong size = Hessian_.cols();
+    Eigen::MatrixXd factor_mat = Eigen::MatrixXd::Identity(Hessian_.rows(), Hessian_.cols());
+    for (ulong i = 0; i < size; ++i) {
+        factor_mat(i,i) = Hessian_(i,i);
+    }
+    double scale = 0;
+    scale = delta_x_.transpose() * (currentLambda_ * factor_mat * delta_x_ + b_);
+    scale += 1e-6;
+
+    // recompute residuals after update state
+    // 统计所有的残差
+    double tempChi = 0.0;
+    for (auto edge: edges_) {
+        edge.second->ComputeResidual();
+        tempChi += edge.second->RobustChi2();
+    }
+    if (err_prior_.size() > 0)
+        tempChi += err_prior_.norm();
+    tempChi *= 0.5;          // 1/2 * err^2
+    
+    double rho = (currentChi_ - tempChi) / scale;
+
+    if(rho > 0 && isfinite(tempChi)){
+        double L_1 = 9.0;
+        currentLambda_ = std::max(currentLambda_ / L_1, 1e-7);
+        currentChi_ = tempChi;
+        return true;
+    }
+    else{
+        double L_2 = 25.;
+        currentLambda_ = std::min(currentLambda_ * L_2, 1e7);
+        return false;
+    }
+}
+
+bool Problem::IsGoodStepInDL() {
+    //recompute residuals after update state
+    double tempChi = 0.0;
+    for(auto edge: edges_) {
+        edge.second->ComputeResidual();
+        tempChi += edge.second->RobustChi2();
+    }
+
+    if (err_prior_.size() > 0)
+        tempChi += err_prior_.norm();
+    //tempChi *= 0.5;          // 1/2 * err^2
+
+    double scale1 = b_.transpose() * delta_x_ ;
+    double scale2 = 0.5 * delta_x_.transpose() * Hessian_ * delta_x_ ;
+
+    double rho = -(currentChi_ - tempChi) / (-scale1 - scale2);
+    
+    //std::cout<<"rho: "<<rho<<std::endl;
+
+    UpdateRadius(rho);
+
+    if(rho > 0 && isfinite(tempChi)) //last step was good 误差在下降
+    {
+        currentChi_ = tempChi;
+        return true;
+    }
+    else return false;
+}
+
+void Problem::UpdateRadius(double rho) {
+    if(rho > 0.75 && delta_x_.norm() == radius)
+        radius = min(2.0 * radius, max_radius);
+    else if(rho < 0.25){
+        radius = 0.25 * delta_x_.norm();
     }
 }
 
